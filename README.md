@@ -1,8 +1,8 @@
-# Company Audit
+# Company Analyzer
 
-AI-powered public company auditor that analyzes SEC filings. Enter any stock ticker to get instant financial intelligence, risk analysis, and natural language Q&A.
+AI-powered public company analyzer that analyzes SEC filings. Enter any stock ticker to get instant financial intelligence, risk analysis, and natural language Q&A.
 
-![Company Audit Demo](docs/demo.png)
+![Company Analyzer Demo](docs/demo.png)
 
 ## Features
 

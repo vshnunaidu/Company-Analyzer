@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Company Auditor - AI-Powered SEC Filing Analysis",
+  title: "Company Analyzer - AI-Powered SEC Filing Analysis",
   description: "Analyze any public company's SEC filings with AI. Enter a ticker to get instant financial intelligence.",
 };
 

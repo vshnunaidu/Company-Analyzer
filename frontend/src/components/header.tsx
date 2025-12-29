@@ -10,7 +10,7 @@ export function Header() {
       <div className="container flex h-14 items-center">
         <div className="flex items-center gap-2 font-semibold">
           <FileSearch className="h-5 w-5" />
-          <span>Company Auditor</span>
+          <span>Company Analyzer</span>
         </div>
 
         <div className="flex-1" />

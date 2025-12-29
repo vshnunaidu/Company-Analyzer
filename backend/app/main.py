@@ -8,7 +8,7 @@ from app.api import company, analysis, chat
 load_dotenv()
 
 app = FastAPI(
-    title="Company Auditor API",
+    title="Company Analyzer API",
     description="AI-powered public company auditor using SEC filings",
     version="1.0.0"
 )
@@ -32,7 +32,7 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
 @app.get("/")
 async def root():
-    return {"message": "Company Auditor API", "status": "running"}
+    return {"message": "Company Analyzer API", "status": "running"}
 
 
 @app.get("/health")

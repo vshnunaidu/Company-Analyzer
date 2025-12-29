@@ -90,7 +90,7 @@ export default function Home() {
           <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-8">
             <div className="text-center space-y-4">
               <h1 className="text-4xl font-bold tracking-tight">
-                AI-Powered Company Auditor
+                AI-Powered Company Analyzer
               </h1>
               <p className="text-xl text-muted-foreground max-w-2xl">
                 Enter any stock ticker to instantly analyze SEC filings with AI.

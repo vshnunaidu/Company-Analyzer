@@ -1,6 +1,6 @@
-# Deploying Company Auditor
+# Deploying Company Analyzer
 
-This guide walks you through deploying Company Auditor to get a stable public URL.
+This guide walks you through deploying Company Analyzer to get a stable public URL.
 
 **Architecture:**
 - **Frontend** (Next.js) → Vercel (free tier)
@@ -25,7 +25,7 @@ git init
 git add .
 git commit -m "Initial commit"
 git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/company-auditor.git
+git remote add origin https://github.com/YOUR_USERNAME/company-analyzer.git
 git push -u origin main
 ```
 
@@ -38,7 +38,7 @@ git push -u origin main
 1. Go to [railway.app](https://railway.app/) and sign in with GitHub
 2. Click **"New Project"**
 3. Select **"Deploy from GitHub repo"**
-4. Choose your `company-auditor` repository
+4. Choose your `company-analyzer` repository
 5. Railway will detect the Python project
 
 ### 2.2 Configure Root Directory
@@ -60,7 +60,7 @@ Go to **Variables** tab and add:
 
 1. Go to **Settings** → **Networking**
 2. Click **"Generate Domain"** to get a public URL
-3. Your backend URL will look like: `https://company-auditor-production.up.railway.app`
+3. Your backend URL will look like: `https://company-analyzer-production.up.railway.app`
 
 **Save this URL** - you'll need it for the frontend.
 
@@ -72,7 +72,7 @@ Go to **Variables** tab and add:
 
 1. Go to [vercel.com](https://vercel.com/) and sign in with GitHub
 2. Click **"Add New Project"**
-3. Import your `company-auditor` repository
+3. Import your `company-analyzer` repository
 4. Configure the project:
    - **Framework Preset**: Next.js
    - **Root Directory**: `frontend`
@@ -83,13 +83,13 @@ Before deploying, add this environment variable:
 
 | Variable | Value |
 |----------|-------|
-| `NEXT_PUBLIC_API_URL` | Your Railway backend URL (e.g., `https://company-auditor-production.up.railway.app`) |
+| `NEXT_PUBLIC_API_URL` | Your Railway backend URL (e.g., `https://company-analyzer-production.up.railway.app`) |
 
 ### 3.3 Deploy
 
 Click **"Deploy"** and wait for the build to complete.
 
-Your frontend URL will look like: `https://company-auditor.vercel.app`
+Your frontend URL will look like: `https://company-analyzer.vercel.app`
 
 ---
 
@@ -100,7 +100,7 @@ Now that you have your Vercel URL, update the Railway backend:
 1. Go to Railway → Your project → **Variables**
 2. Update `CORS_ORIGINS` to include your Vercel URL:
    ```
-   https://company-auditor.vercel.app,http://localhost:3000
+   https://company-analyzer.vercel.app,http://localhost:3000
    ```
 3. Railway will automatically redeploy
 
