@@ -1,4 +1,4 @@
-# Company Audit
+# Company Auditor
 
 AI-powered public company auditor that analyzes SEC filings. Enter any stock ticker to get instant financial intelligence, risk analysis, and natural language Q&A.
 
