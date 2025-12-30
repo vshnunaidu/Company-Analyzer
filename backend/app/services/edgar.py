@@ -189,7 +189,11 @@ class EdgarClient:
         fiscal_year: str
     ) -> list[FilingSection]:
         """Parse a 10-K filing into sections based on SEC structure."""
-        soup = BeautifulSoup(html_content, "lxml")
+        # Use html.parser as fallback if lxml not available
+        try:
+            soup = BeautifulSoup(html_content, "lxml")
+        except Exception:
+            soup = BeautifulSoup(html_content, "html.parser")
 
         # Remove scripts, styles, and tables (financial tables are noisy)
         for element in soup(["script", "style"]):
