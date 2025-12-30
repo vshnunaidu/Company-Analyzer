@@ -217,7 +217,7 @@ class EdgarClient:
             if i + 1 < len(section_positions):
                 end_pos = section_positions[i + 1][0]
             else:
-                end_pos = min(start_pos + 50000, len(text))  # Cap at 50k chars
+                end_pos = min(start_pos + 20000, len(text))  # Cap at 20k chars
 
             content = text[start_pos:end_pos].strip()
 
@@ -225,9 +225,9 @@ class EdgarClient:
             if len(content) < 500:
                 continue
 
-            # Truncate very long sections
-            if len(content) > 30000:
-                content = content[:30000] + "\n\n[Content truncated...]"
+            # Truncate very long sections (smaller = faster embedding)
+            if len(content) > 15000:
+                content = content[:15000] + "\n\n[Content truncated...]"
 
             sections.append(FilingSection(
                 name=section_name,
@@ -238,7 +238,7 @@ class EdgarClient:
 
         # If no sections found, create a general section
         if not sections:
-            content = text[:50000] if len(text) > 50000 else text
+            content = text[:20000] if len(text) > 20000 else text
             sections.append(FilingSection(
                 name="Full Filing",
                 content=content,
