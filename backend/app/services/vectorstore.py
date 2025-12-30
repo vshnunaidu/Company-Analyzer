@@ -162,6 +162,23 @@ class VectorStore:
         """Check if a ticker has been indexed."""
         return ticker.upper() in self._index
 
+    def delete_ticker(self, ticker: str) -> bool:
+        """Delete a ticker from the store."""
+        ticker = ticker.upper()
+        if ticker not in self._index:
+            return False
+
+        # Remove from index
+        del self._index[ticker]
+        self._save_index()
+
+        # Remove data file
+        ticker_file = self._get_ticker_file(ticker)
+        if ticker_file.exists():
+            ticker_file.unlink()
+
+        return True
+
     def get_indexed_tickers(self) -> list[str]:
         """Get list of all indexed tickers."""
         return sorted(list(self._index.keys()))

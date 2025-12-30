@@ -162,10 +162,25 @@ async def get_index_status(ticker: str):
     return {"status": "not_started", "progress": 0}
 
 
+@router.delete("/index/{ticker}")
+async def delete_index(ticker: str):
+    """Delete cached data for a ticker (forces re-index on next request)."""
+    ticker = ticker.upper()
+    store = get_vector_store()
+
+    if store.delete_ticker(ticker):
+        logger.info(f"Deleted cached data for {ticker}")
+        return {"status": "deleted", "ticker": ticker}
+    else:
+        raise HTTPException(status_code=404, detail=f"Ticker {ticker} not found in cache")
+
+
 @router.get("/{ticker}", response_model=AnalysisResponse)
 async def analyze_company(ticker: str):
     """Get AI-powered analysis of a company's 10-K filing."""
     ticker = ticker.upper()
+    start_time = time.time()
+    logger.info(f"=== Starting analysis for {ticker} ===")
 
     # Check if indexed
     store = get_vector_store()
@@ -177,25 +192,35 @@ async def analyze_company(ticker: str):
 
     try:
         # Get sections from vector store (all of them for analysis)
+        step_start = time.time()
         sections = store.search("company overview risk factors financial performance", ticker, n_results=5)
+        logger.info(f"Step 1 - Get sections: {time.time() - step_start:.1f}s ({len(sections)} sections)")
 
         if not sections:
             raise HTTPException(status_code=404, detail="No filing data found")
 
         # Get financial data
+        step_start = time.time()
         try:
             financial_data = get_financial_data(ticker)
+            logger.info(f"Step 2 - Yahoo Finance: {time.time() - step_start:.1f}s")
         except FinanceError:
             financial_data = None
+            logger.info(f"Step 2 - Yahoo Finance: skipped (rate limited)")
 
         # Get company info from EDGAR
+        step_start = time.time()
         edgar = await get_edgar_client()
         company_info = await edgar.get_company_info(ticker)
         filing_info = await edgar.get_latest_10k(ticker)
+        logger.info(f"Step 3 - EDGAR info: {time.time() - step_start:.1f}s")
 
         # Run Claude analysis
+        step_start = time.time()
         claude = get_claude_client()
         analysis = await claude.analyze_filing(sections, company_info, financial_data)
+        logger.info(f"Step 4 - Claude analysis: {time.time() - step_start:.1f}s")
+        logger.info(f"=== Analysis complete for {ticker}: {time.time() - start_time:.1f}s total ===")
 
         return AnalysisResponse(
             ticker=ticker,
