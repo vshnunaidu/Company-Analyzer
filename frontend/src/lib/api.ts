@@ -106,12 +106,18 @@ export async function indexCompany(ticker: string): Promise<{ status: string }> 
 }
 
 export async function getIndexStatus(ticker: string): Promise<IndexStatus> {
-  const response = await fetch(`${API_URL}/api/analysis/index/${ticker}/status`);
+  // Add cache-busting for polling
+  const response = await fetch(`${API_URL}/api/analysis/index/${ticker}/status?_t=${Date.now()}`, {
+    cache: 'no-store',
+  });
   return handleResponse<IndexStatus>(response);
 }
 
 export async function getAnalysis(ticker: string): Promise<Analysis> {
-  const response = await fetch(`${API_URL}/api/analysis/${ticker}`);
+  // Add cache-busting to ensure fresh data
+  const response = await fetch(`${API_URL}/api/analysis/${ticker}?_t=${Date.now()}`, {
+    cache: 'no-store',
+  });
   return handleResponse<Analysis>(response);
 }
 
