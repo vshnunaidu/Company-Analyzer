@@ -58,14 +58,15 @@ async def search_companies(
 @router.get("/{ticker}", response_model=CompanyResponse)
 async def get_company(ticker: str):
     """Get company information by ticker."""
+    ticker = ticker.upper()
+
+    # Check if already indexed
+    store = get_vector_store()
+    is_indexed = store.has_ticker(ticker)
+
+    # Try Yahoo Finance first, fall back to SEC EDGAR if rate limited
     try:
-        # Get financial data from yfinance
         financial_data = get_financial_data(ticker)
-
-        # Check if already indexed
-        store = get_vector_store()
-        is_indexed = store.has_ticker(ticker)
-
         return CompanyResponse(
             ticker=financial_data["ticker"],
             name=financial_data["name"],
@@ -75,9 +76,22 @@ async def get_company(ticker: str):
             description=financial_data.get("description"),
             is_indexed=is_indexed,
         )
-
-    except FinanceError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except FinanceError:
+        # Fall back to SEC EDGAR for basic company info
+        try:
+            edgar = await get_edgar_client()
+            company_info = await edgar.get_company_info(ticker)
+            return CompanyResponse(
+                ticker=ticker,
+                name=company_info.get("name", ticker),
+                sector=company_info.get("sic_description"),
+                industry=company_info.get("sic_description"),
+                market_cap=None,
+                description=None,
+                is_indexed=is_indexed,
+            )
+        except (EdgarError, TickerNotFoundError) as e:
+            raise HTTPException(status_code=404, detail=f"Company not found: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
@@ -85,10 +99,39 @@ async def get_company(ticker: str):
 @router.get("/{ticker}/financial")
 async def get_company_financials(ticker: str):
     """Get detailed financial data for a company."""
+    ticker = ticker.upper()
     try:
         return get_financial_data(ticker)
-    except FinanceError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except FinanceError:
+        # Return placeholder data when Yahoo Finance is rate limited
+        # The app can still function with SEC data for analysis
+        return {
+            "ticker": ticker,
+            "name": ticker,
+            "sector": None,
+            "industry": None,
+            "market_cap": None,
+            "price": None,
+            "revenue": None,
+            "net_income": None,
+            "gross_margin": None,
+            "operating_margin": None,
+            "profit_margin": None,
+            "debt_to_equity": None,
+            "current_ratio": None,
+            "return_on_equity": None,
+            "return_on_assets": None,
+            "pe_ratio": None,
+            "forward_pe": None,
+            "peg_ratio": None,
+            "beta": None,
+            "dividend_yield": None,
+            "fifty_two_week_high": None,
+            "fifty_two_week_low": None,
+            "average_volume": None,
+            "description": None,
+            "_limited": True,  # Flag to indicate data is limited
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
