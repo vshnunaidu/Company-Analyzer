@@ -1,8 +1,12 @@
 """Analysis endpoints for processing 10-K filings."""
 
+import time
+import logging
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from app.services.edgar import (
     get_edgar_client,
@@ -76,34 +80,46 @@ async def index_company(request: IndexRequest):
         )
 
     try:
+        start_time = time.time()
+        logger.info(f"=== Starting indexing for {ticker} ===")
+
         # Set status to processing
         set_indexing_status(ticker, {"status": "processing", "progress": 0})
 
         # Fetch filing info
+        step_start = time.time()
         edgar = await get_edgar_client()
         filing_info = await edgar.get_latest_10k(ticker)
+        logger.info(f"Step 1 - Get filing info: {time.time() - step_start:.1f}s")
 
         set_indexing_status(ticker, {"status": "processing", "progress": 25})
 
         # Fetch filing content
+        step_start = time.time()
         content = await edgar.fetch_filing_content(filing_info["filing_url"])
+        logger.info(f"Step 2 - Download content: {time.time() - step_start:.1f}s ({len(content) // 1024}KB)")
 
         set_indexing_status(ticker, {"status": "processing", "progress": 50})
 
         # Parse sections
+        step_start = time.time()
         sections = edgar.parse_10k_sections(
             content,
             ticker,
             filing_info["filing_date"][:4]
         )
+        logger.info(f"Step 3 - Parse sections: {time.time() - step_start:.1f}s ({len(sections)} sections)")
 
         set_indexing_status(ticker, {"status": "processing", "progress": 75})
 
         # Add to vector store
+        step_start = time.time()
         sections_data = [s.to_dict() for s in sections]
         count = store.add_sections(sections_data, ticker)
+        logger.info(f"Step 4 - Store sections: {time.time() - step_start:.1f}s")
 
         set_indexing_status(ticker, {"status": "complete", "progress": 100})
+        logger.info(f"=== Indexing complete for {ticker}: {time.time() - start_time:.1f}s total ===")
 
         return IndexResponse(
             ticker=ticker,

@@ -2,9 +2,17 @@
 
 import httpx
 import re
+import time
+import logging
 from typing import Optional
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 from dataclasses import dataclass
+import warnings
+
+# Suppress XML parsing warning
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+
+logger = logging.getLogger(__name__)
 
 
 class EdgarError(Exception):
@@ -176,6 +184,9 @@ class EdgarClient:
 
     async def fetch_filing_content(self, filing_url: str) -> str:
         """Fetch the HTML content of a filing with streaming and size limit."""
+        start_time = time.time()
+        logger.info(f"Starting download from: {filing_url}")
+
         try:
             # Use streaming to handle large files and enforce size limit
             async with self.client.stream("GET", filing_url) as response:
@@ -185,11 +196,13 @@ class EdgarClient:
 
                 # Check content-length if available
                 content_length = response.headers.get("content-length")
-                if content_length and int(content_length) > self.MAX_FILE_SIZE:
-                    raise EdgarError(
-                        f"Filing too large ({int(content_length) // 1024 // 1024}MB). "
-                        "Some companies like BRK have very large filings. Try a different company."
-                    )
+                if content_length:
+                    logger.info(f"File size: {int(content_length) // 1024}KB")
+                    if int(content_length) > self.MAX_FILE_SIZE:
+                        raise EdgarError(
+                            f"Filing too large ({int(content_length) // 1024 // 1024}MB). "
+                            "Some companies like BRK have very large filings. Try a different company."
+                        )
 
                 # Stream and accumulate content with size check
                 chunks = []
@@ -198,9 +211,12 @@ class EdgarClient:
                     total_size += len(chunk)
                     if total_size > self.MAX_FILE_SIZE:
                         # Stop downloading but use what we have
+                        logger.warning(f"File exceeded size limit, stopping at {total_size // 1024}KB")
                         break
                     chunks.append(chunk)
 
+                elapsed = time.time() - start_time
+                logger.info(f"Download complete: {total_size // 1024}KB in {elapsed:.1f}s")
                 return b"".join(chunks).decode("utf-8", errors="ignore")
 
         except httpx.TimeoutException:
@@ -215,11 +231,16 @@ class EdgarClient:
         fiscal_year: str
     ) -> list[FilingSection]:
         """Parse a 10-K filing into sections based on SEC structure."""
+        start_time = time.time()
+        logger.info(f"Parsing {len(html_content) // 1024}KB of HTML for {ticker}")
+
         # Use html.parser as fallback if lxml not available
         try:
             soup = BeautifulSoup(html_content, "lxml")
         except Exception:
             soup = BeautifulSoup(html_content, "html.parser")
+
+        logger.info(f"BeautifulSoup parsing took {time.time() - start_time:.1f}s")
 
         # Remove scripts, styles, and tables (financial tables are noisy)
         for element in soup(["script", "style"]):
@@ -276,6 +297,8 @@ class EdgarClient:
                 ticker=ticker.upper(),
             ))
 
+        elapsed = time.time() - start_time
+        logger.info(f"Parsing complete: {len(sections)} sections in {elapsed:.1f}s")
         return sections
 
 
