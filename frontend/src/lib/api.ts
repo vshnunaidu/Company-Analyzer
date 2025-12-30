@@ -1,5 +1,54 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Timeout for different operations (in ms)
+const TIMEOUTS = {
+  default: 30000,      // 30s for most calls
+  indexing: 180000,    // 3 minutes for indexing (large filings)
+  analysis: 60000,     // 1 minute for analysis
+};
+
+// Fetch with timeout and retry
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  timeout: number = TIMEOUTS.default,
+  retries: number = 2
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Don't retry on abort (user cancelled) or if it's not a timeout
+      if (lastError.name === 'AbortError') {
+        // This is a timeout, retry if we have attempts left
+        if (attempt < retries) {
+          console.log(`Request timeout, retrying (${attempt + 1}/${retries})...`);
+          continue;
+        }
+        throw new Error('Request timed out. The server may be processing a large filing. Please wait and try again.');
+      }
+
+      // For other errors, throw immediately
+      throw lastError;
+    }
+  }
+
+  throw lastError || new Error('Request failed');
+}
+
 export interface Company {
   ticker: string;
   name: string;
@@ -81,43 +130,60 @@ export interface SearchResult {
 
 export async function searchCompanies(query: string): Promise<SearchResult[]> {
   if (!query.trim()) return [];
-  const response = await fetch(`${API_URL}/api/company/search?q=${encodeURIComponent(query)}`);
+  const response = await fetchWithRetry(
+    `${API_URL}/api/company/search?q=${encodeURIComponent(query)}`,
+    {},
+    TIMEOUTS.default,
+    1
+  );
   const data = await handleResponse<{ results: SearchResult[] }>(response);
   return data.results;
 }
 
 export async function getCompany(ticker: string): Promise<Company> {
-  const response = await fetch(`${API_URL}/api/company/${ticker}`);
+  const response = await fetchWithRetry(`${API_URL}/api/company/${ticker}`);
   return handleResponse<Company>(response);
 }
 
 export async function getFinancials(ticker: string): Promise<FinancialData> {
-  const response = await fetch(`${API_URL}/api/company/${ticker}/financial`);
+  const response = await fetchWithRetry(`${API_URL}/api/company/${ticker}/financial`);
   return handleResponse<FinancialData>(response);
 }
 
 export async function indexCompany(ticker: string): Promise<{ status: string }> {
-  const response = await fetch(`${API_URL}/api/analysis/index`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ticker }),
-  });
+  // Indexing can take a while for large filings - use longer timeout
+  const response = await fetchWithRetry(
+    `${API_URL}/api/analysis/index`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticker }),
+    },
+    TIMEOUTS.indexing,
+    1  // Only 1 retry for indexing
+  );
   return handleResponse(response);
 }
 
 export async function getIndexStatus(ticker: string): Promise<IndexStatus> {
-  // Add cache-busting for polling
-  const response = await fetch(`${API_URL}/api/analysis/index/${ticker}/status?_t=${Date.now()}`, {
-    cache: 'no-store',
-  });
+  // Short timeout for status polling, no retries
+  const response = await fetchWithRetry(
+    `${API_URL}/api/analysis/index/${ticker}/status?_t=${Date.now()}`,
+    { cache: 'no-store' },
+    10000,  // 10 second timeout for status checks
+    0       // No retries
+  );
   return handleResponse<IndexStatus>(response);
 }
 
 export async function getAnalysis(ticker: string): Promise<Analysis> {
-  // Add cache-busting to ensure fresh data
-  const response = await fetch(`${API_URL}/api/analysis/${ticker}?_t=${Date.now()}`, {
-    cache: 'no-store',
-  });
+  // Analysis calls Claude API - use longer timeout
+  const response = await fetchWithRetry(
+    `${API_URL}/api/analysis/${ticker}?_t=${Date.now()}`,
+    { cache: 'no-store' },
+    TIMEOUTS.analysis,
+    2  // Retry twice for analysis
+  );
   return handleResponse<Analysis>(response);
 }
 
