@@ -67,10 +67,13 @@ class EdgarClient:
         "Accept": "application/json",
     }
 
+    # Maximum file size to download (10MB) - larger files like BRK take too long
+    MAX_FILE_SIZE = 10 * 1024 * 1024
+
     def __init__(self):
         self.client = httpx.AsyncClient(
             headers=self.HEADERS,
-            timeout=30.0,
+            timeout=httpx.Timeout(60.0, connect=10.0),  # 60s read, 10s connect
             follow_redirects=True,
         )
 
@@ -172,13 +175,36 @@ class EdgarClient:
             raise EdgarError(f"Failed to fetch filings: {str(e)}")
 
     async def fetch_filing_content(self, filing_url: str) -> str:
-        """Fetch the HTML content of a filing."""
+        """Fetch the HTML content of a filing with streaming and size limit."""
         try:
-            response = await self.client.get(filing_url)
-            if response.status_code == 429:
-                raise RateLimitError("SEC rate limit exceeded. Please wait a moment.")
-            response.raise_for_status()
-            return response.text
+            # Use streaming to handle large files and enforce size limit
+            async with self.client.stream("GET", filing_url) as response:
+                if response.status_code == 429:
+                    raise RateLimitError("SEC rate limit exceeded. Please wait a moment.")
+                response.raise_for_status()
+
+                # Check content-length if available
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > self.MAX_FILE_SIZE:
+                    raise EdgarError(
+                        f"Filing too large ({int(content_length) // 1024 // 1024}MB). "
+                        "Some companies like BRK have very large filings. Try a different company."
+                    )
+
+                # Stream and accumulate content with size check
+                chunks = []
+                total_size = 0
+                async for chunk in response.aiter_bytes():
+                    total_size += len(chunk)
+                    if total_size > self.MAX_FILE_SIZE:
+                        # Stop downloading but use what we have
+                        break
+                    chunks.append(chunk)
+
+                return b"".join(chunks).decode("utf-8", errors="ignore")
+
+        except httpx.TimeoutException:
+            raise EdgarError("Request timed out. The SEC server may be slow. Please try again.")
         except httpx.HTTPError as e:
             raise EdgarError(f"Failed to fetch filing content: {str(e)}")
 
