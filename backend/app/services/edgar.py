@@ -84,20 +84,30 @@ class EdgarClient:
             timeout=httpx.Timeout(180.0, connect=15.0),  # 3 min read, 15s connect
             follow_redirects=True,
         )
+        # Cache CIK lookups to avoid redundant API calls
+        self._cik_cache: dict[str, str] = {}
 
     async def close(self):
         await self.client.aclose()
 
     async def get_cik(self, ticker: str) -> str:
         """Get CIK number for a ticker symbol."""
-        url = f"{self.BASE_URL}/submissions/CIK{ticker.upper()}.json"
+        ticker_upper = ticker.upper()
+
+        # Check cache first
+        if ticker_upper in self._cik_cache:
+            return self._cik_cache[ticker_upper]
+
+        url = f"{self.BASE_URL}/submissions/CIK{ticker_upper}.json"
 
         # First try direct lookup
         try:
             response = await self.client.get(url)
             if response.status_code == 200:
                 data = response.json()
-                return data.get("cik", "").zfill(10)
+                cik = data.get("cik", "").zfill(10)
+                self._cik_cache[ticker_upper] = cik
+                return cik
         except httpx.HTTPError:
             pass
 
@@ -110,11 +120,12 @@ class EdgarClient:
             response.raise_for_status()
 
             data = response.json()
-            ticker_upper = ticker.upper()
 
             for entry in data.values():
                 if entry.get("ticker") == ticker_upper:
-                    return str(entry.get("cik_str", "")).zfill(10)
+                    cik = str(entry.get("cik_str", "")).zfill(10)
+                    self._cik_cache[ticker_upper] = cik
+                    return cik
 
             raise TickerNotFoundError(f"Ticker '{ticker}' not found in SEC database")
 

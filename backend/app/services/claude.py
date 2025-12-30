@@ -1,8 +1,12 @@
 """Claude AI service for analysis and chat."""
 
 import os
+import time
+import logging
 from typing import AsyncGenerator, Optional
 from anthropic import AsyncAnthropic
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeError(Exception):
@@ -18,7 +22,9 @@ class ClaudeClient:
         if not api_key:
             raise ClaudeError("ANTHROPIC_API_KEY environment variable not set")
         self.client = AsyncAnthropic(api_key=api_key)
-        self.model = "claude-sonnet-4-20250514"
+        # Use Haiku for fast analysis, Sonnet for chat
+        self.fast_model = "claude-3-5-haiku-20241022"
+        self.chat_model = "claude-3-5-sonnet-20241022"
 
     async def analyze_filing(
         self,
@@ -27,11 +33,15 @@ class ClaudeClient:
         financial_data: Optional[dict] = None
     ) -> dict:
         """Analyze a 10-K filing and generate an audit report."""
+        start_time = time.time()
 
+        # Limit to 3 most important sections with 4000 chars each for speed
         sections_text = "\n\n---\n\n".join([
-            f"## {s['name']}\n{s['content'][:8000]}"  # Limit each section
-            for s in sections[:5]  # Limit to 5 most important sections
+            f"## {s['name']}\n{s['content'][:4000]}"
+            for s in sections[:3]
         ])
+
+        logger.info(f"Preparing Claude analysis with {len(sections_text)} chars")
 
         financial_context = ""
         if financial_data:
@@ -87,11 +97,17 @@ Respond in this exact JSON format:
 }}"""
 
         try:
+            logger.info(f"Calling Claude API ({self.fast_model})...")
+            api_start = time.time()
+
             response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=2000,
+                model=self.fast_model,
+                max_tokens=1500,
                 messages=[{"role": "user", "content": prompt}]
             )
+
+            api_elapsed = time.time() - api_start
+            logger.info(f"Claude API response in {api_elapsed:.1f}s")
 
             # Extract JSON from response
             content = response.content[0].text
@@ -105,7 +121,10 @@ Respond in this exact JSON format:
 
             if json_start != -1 and json_end > json_start:
                 json_str = content[json_start:json_end]
-                return json.loads(json_str)
+                result = json.loads(json_str)
+                total_elapsed = time.time() - start_time
+                logger.info(f"Analysis complete in {total_elapsed:.1f}s total")
+                return result
             else:
                 raise ClaudeError("Failed to extract JSON from response")
 
@@ -157,7 +176,7 @@ Content Guidelines:
 
         try:
             async with self.client.messages.stream(
-                model=self.model,
+                model=self.chat_model,
                 max_tokens=1000,
                 system=system_prompt,
                 messages=messages
