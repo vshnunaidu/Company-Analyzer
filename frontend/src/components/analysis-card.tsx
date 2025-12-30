@@ -173,7 +173,7 @@ function AnalysisLoadingState() {
             <Clock className="h-4 w-4" />
             <span>Elapsed: {formatTime(elapsedTime)}</span>
             <span className="text-muted-foreground/50">•</span>
-            <span>Usually takes 10-20 seconds</span>
+            <span>Usually takes 5-15 seconds</span>
           </div>
 
           {/* Progress dots */}
