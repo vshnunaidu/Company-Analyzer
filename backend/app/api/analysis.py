@@ -2,6 +2,7 @@
 
 import time
 import logging
+import threading
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
@@ -52,16 +53,21 @@ class IndexResponse(BaseModel):
     filing_date: str
 
 
-# In-memory status tracking for indexing
+# In-memory status tracking for indexing (with thread safety)
 _indexing_status: dict[str, dict] = {}
+_status_lock = threading.Lock()
 
 
 def get_indexing_status(ticker: str) -> Optional[dict]:
-    return _indexing_status.get(ticker.upper())
+    """Get indexing status with thread safety."""
+    with _status_lock:
+        return _indexing_status.get(ticker.upper(), {}).copy() if _indexing_status.get(ticker.upper()) else None
 
 
 def set_indexing_status(ticker: str, status: dict):
-    _indexing_status[ticker.upper()] = status
+    """Set indexing status with thread safety."""
+    with _status_lock:
+        _indexing_status[ticker.upper()] = status.copy()
 
 
 @router.post("/index", response_model=IndexResponse)

@@ -15,7 +15,13 @@ def get_financial_data(ticker: str) -> dict:
         stock = yf.Ticker(ticker.upper())
         info = stock.info
 
-        if not info or info.get("regularMarketPrice") is None:
+        # Validate that we have meaningful data (check multiple fields)
+        # Some stocks may not have regularMarketPrice but have other valid data
+        if not info or not any([
+            info.get("longName"),
+            info.get("shortName"),
+            info.get("quoteType") == "EQUITY"
+        ]):
             raise FinanceError(f"No data found for ticker {ticker}")
 
         return {

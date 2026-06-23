@@ -90,17 +90,21 @@ class EdgarClient:
     async def close(self):
         await self.client.aclose()
 
-    async def get_cik(self, ticker: str) -> str:
+    async def get_cik(self, ticker: str, max_retries: int = 3) -> str:
         """Get CIK number for a ticker symbol."""
+        import asyncio
+
         ticker_upper = ticker.upper()
+        # Clean ticker for SEC lookup (handle dots in symbols like BRK.B)
+        ticker_clean = ticker_upper.replace(".", "").replace("-", "")
 
-        # Check cache first
-        if ticker_upper in self._cik_cache:
-            return self._cik_cache[ticker_upper]
+        # Check cache first (try both original and cleaned)
+        for t in [ticker_upper, ticker_clean]:
+            if t in self._cik_cache:
+                return self._cik_cache[t]
 
-        url = f"{self.BASE_URL}/submissions/CIK{ticker_upper}.json"
-
-        # First try direct lookup
+        # Try direct lookup with cleaned ticker
+        url = f"{self.BASE_URL}/submissions/CIK{ticker_clean}.json"
         try:
             response = await self.client.get(url)
             if response.status_code == 200:
@@ -111,87 +115,132 @@ class EdgarClient:
         except httpx.HTTPError:
             pass
 
-        # Fall back to company tickers file (note: different domain)
+        # Fall back to company tickers file with retry logic
         tickers_url = "https://www.sec.gov/files/company_tickers.json"
-        try:
-            response = await self.client.get(tickers_url)
-            if response.status_code == 429:
-                raise RateLimitError("SEC rate limit exceeded. Please wait a moment.")
-            response.raise_for_status()
 
-            data = response.json()
+        for attempt in range(max_retries):
+            try:
+                response = await self.client.get(tickers_url)
 
-            for entry in data.values():
-                if entry.get("ticker") == ticker_upper:
-                    cik = str(entry.get("cik_str", "")).zfill(10)
-                    self._cik_cache[ticker_upper] = cik
-                    return cik
+                # Handle rate limiting with exponential backoff
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) * 1  # 1s, 2s, 4s
+                        logger.warning(f"SEC rate limited, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    raise RateLimitError("SEC rate limit exceeded. Please wait a moment and try again.")
 
-            raise TickerNotFoundError(f"Ticker '{ticker}' not found in SEC database")
+                response.raise_for_status()
+                data = response.json()
 
-        except httpx.HTTPError as e:
-            raise EdgarError(f"Failed to fetch company data: {str(e)}")
+                # Try exact match first (handles BRK.B), then cleaned version
+                for t in [ticker_upper, ticker_clean]:
+                    for entry in data.values():
+                        entry_ticker = entry.get("ticker", "")
+                        # Compare both with original dot notation and cleaned
+                        if entry_ticker == t or entry_ticker.replace(".", "").replace("-", "") == ticker_clean:
+                            cik = str(entry.get("cik_str", "")).zfill(10)
+                            self._cik_cache[ticker_upper] = cik
+                            logger.info(f"Found CIK {cik} for ticker {ticker} (matched as {entry_ticker})")
+                            return cik
+
+                raise TickerNotFoundError(f"Ticker '{ticker}' not found in SEC database")
+
+            except httpx.HTTPError as e:
+                if attempt == max_retries - 1:
+                    raise EdgarError(f"Failed to fetch company data: {str(e)}")
+                # Retry on other HTTP errors too
+                await asyncio.sleep(1)
+
+        raise EdgarError("Failed to fetch company data after retries")
 
     async def get_company_info(self, ticker: str) -> dict:
         """Get company information from SEC."""
+        import asyncio
+
         cik = await self.get_cik(ticker)
         url = f"{self.BASE_URL}/submissions/CIK{cik}.json"
 
-        try:
-            response = await self.client.get(url)
-            if response.status_code == 429:
-                raise RateLimitError("SEC rate limit exceeded. Please wait a moment.")
-            response.raise_for_status()
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await self.client.get(url)
 
-            data = response.json()
-            return {
-                "cik": cik,
-                "name": data.get("name", ""),
-                "ticker": ticker.upper(),
-                "sic": data.get("sic", ""),
-                "sic_description": data.get("sicDescription", ""),
-                "fiscal_year_end": data.get("fiscalYearEnd", ""),
-            }
-        except httpx.HTTPError as e:
-            raise EdgarError(f"Failed to fetch company info: {str(e)}")
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) * 1
+                        logger.warning(f"SEC rate limited, retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    raise RateLimitError("SEC rate limit exceeded. Please wait a moment.")
+
+                response.raise_for_status()
+
+                data = response.json()
+                return {
+                    "cik": cik,
+                    "name": data.get("name", ""),
+                    "ticker": ticker.upper(),
+                    "sic": data.get("sic", ""),
+                    "sic_description": data.get("sicDescription", ""),
+                    "fiscal_year_end": data.get("fiscalYearEnd", ""),
+                }
+            except httpx.HTTPError as e:
+                if attempt == max_retries - 1:
+                    raise EdgarError(f"Failed to fetch company info: {str(e)}")
+                await asyncio.sleep(1)
 
     async def get_latest_10k(self, ticker: str) -> dict:
         """Get the latest 10-K filing for a company."""
+        import asyncio
+
         cik = await self.get_cik(ticker)
         url = f"{self.BASE_URL}/submissions/CIK{cik}.json"
 
-        try:
-            response = await self.client.get(url)
-            if response.status_code == 429:
-                raise RateLimitError("SEC rate limit exceeded. Please wait a moment.")
-            response.raise_for_status()
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await self.client.get(url)
 
-            data = response.json()
-            filings = data.get("filings", {}).get("recent", {})
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) * 1
+                        logger.warning(f"SEC rate limited, retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    raise RateLimitError("SEC rate limit exceeded. Please wait a moment.")
 
-            forms = filings.get("form", [])
-            accession_numbers = filings.get("accessionNumber", [])
-            filing_dates = filings.get("filingDate", [])
-            primary_docs = filings.get("primaryDocument", [])
+                response.raise_for_status()
 
-            for i, form in enumerate(forms):
-                if form in ["10-K", "10-K/A"]:
-                    accession = accession_numbers[i].replace("-", "")
-                    # CIK in archive URLs has no leading zeros
-                    cik_no_padding = cik.lstrip("0") or "0"
-                    # Use www.sec.gov for Archives (data.sec.gov doesn't have all files)
-                    return {
-                        "cik": cik,
-                        "accession_number": accession_numbers[i],
-                        "filing_date": filing_dates[i],
-                        "primary_document": primary_docs[i],
-                        "filing_url": f"https://www.sec.gov/Archives/edgar/data/{cik_no_padding}/{accession}/{primary_docs[i]}",
-                    }
+                data = response.json()
+                filings = data.get("filings", {}).get("recent", {})
 
-            raise FilingNotFoundError(f"No 10-K filing found for {ticker}")
+                forms = filings.get("form", [])
+                accession_numbers = filings.get("accessionNumber", [])
+                filing_dates = filings.get("filingDate", [])
+                primary_docs = filings.get("primaryDocument", [])
 
-        except httpx.HTTPError as e:
-            raise EdgarError(f"Failed to fetch filings: {str(e)}")
+                for i, form in enumerate(forms):
+                    if form in ["10-K", "10-K/A"]:
+                        accession = accession_numbers[i].replace("-", "")
+                        # CIK in archive URLs has no leading zeros
+                        cik_no_padding = cik.lstrip("0") or "0"
+                        # Use www.sec.gov for Archives (data.sec.gov doesn't have all files)
+                        return {
+                            "cik": cik,
+                            "accession_number": accession_numbers[i],
+                            "filing_date": filing_dates[i],
+                            "primary_document": primary_docs[i],
+                            "filing_url": f"https://www.sec.gov/Archives/edgar/data/{cik_no_padding}/{accession}/{primary_docs[i]}",
+                        }
+
+                raise FilingNotFoundError(f"No 10-K filing found for {ticker}")
+
+            except httpx.HTTPError as e:
+                if attempt == max_retries - 1:
+                    raise EdgarError(f"Failed to fetch filings: {str(e)}")
+                await asyncio.sleep(1)
 
     async def fetch_filing_content(self, filing_url: str) -> str:
         """Fetch the HTML content of a filing with streaming and size limit."""
@@ -300,6 +349,7 @@ class EdgarClient:
 
         # If no sections found, create a general section
         if not sections:
+            logger.warning(f"No standard 10-K sections found for {ticker}. Using full filing as fallback. This may indicate an unusual filing format.")
             content = text[:50000] if len(text) > 50000 else text
             sections.append(FilingSection(
                 name="Full Filing",
@@ -307,6 +357,8 @@ class EdgarClient:
                 fiscal_year=fiscal_year,
                 ticker=ticker.upper(),
             ))
+        else:
+            logger.info(f"Successfully extracted {len(sections)} sections: {[s.name for s in sections]}")
 
         elapsed = time.time() - start_time
         logger.info(f"Parsing complete: {len(sections)} sections in {elapsed:.1f}s")

@@ -22,9 +22,9 @@ class ClaudeClient:
         if not api_key:
             raise ClaudeError("ANTHROPIC_API_KEY environment variable not set")
         self.client = AsyncAnthropic(api_key=api_key)
-        # Use Haiku for fast analysis, Sonnet for chat
-        self.fast_model = "claude-3-5-haiku-20241022"
-        self.chat_model = "claude-3-5-sonnet-20241022"
+        # Use Sonnet 4.5 for both analysis and chat
+        self.fast_model = "claude-sonnet-4-5-20250929"
+        self.chat_model = "claude-sonnet-4-5-20250929"
 
     async def analyze_filing(
         self,
@@ -43,17 +43,27 @@ class ClaudeClient:
 
         logger.info(f"Preparing Claude analysis with {len(sections_text)} chars")
 
+        # Helper functions for safe formatting
+        def format_currency(value):
+            return f"${value:,.0f}" if value is not None else "N/A"
+
+        def format_percentage(value):
+            return f"{value:.1%}" if value is not None else "N/A"
+
+        def format_ratio(value):
+            return f"{value:.2f}" if value is not None else "N/A"
+
         financial_context = ""
         if financial_data:
             financial_context = f"""
 Current Financial Data:
-- Market Cap: ${financial_data.get('market_cap', 'N/A'):,.0f}
-- Revenue (TTM): ${financial_data.get('revenue', 'N/A'):,.0f}
-- Net Income (TTM): ${financial_data.get('net_income', 'N/A'):,.0f}
-- Gross Margin: {financial_data.get('gross_margin', 'N/A'):.1%}
-- Operating Margin: {financial_data.get('operating_margin', 'N/A'):.1%}
-- Debt to Equity: {financial_data.get('debt_to_equity', 'N/A'):.2f}
-- Current Ratio: {financial_data.get('current_ratio', 'N/A'):.2f}
+- Market Cap: {format_currency(financial_data.get('market_cap'))}
+- Revenue (TTM): {format_currency(financial_data.get('revenue'))}
+- Net Income (TTM): {format_currency(financial_data.get('net_income'))}
+- Gross Margin: {format_percentage(financial_data.get('gross_margin'))}
+- Operating Margin: {format_percentage(financial_data.get('operating_margin'))}
+- Debt to Equity: {format_ratio(financial_data.get('debt_to_equity'))}
+- Current Ratio: {format_ratio(financial_data.get('current_ratio'))}
 """
 
         prompt = f"""Analyze this SEC 10-K filing for {company_info['name']} ({company_info['ticker']}).
@@ -102,7 +112,7 @@ Respond in this exact JSON format:
 
             response = await self.client.messages.create(
                 model=self.fast_model,
-                max_tokens=1500,
+                max_tokens=2048,
                 messages=[{"role": "user", "content": prompt}]
             )
 
@@ -114,22 +124,52 @@ Respond in this exact JSON format:
 
             # Try to parse JSON from the response
             import json
+            import re
 
-            # Find JSON in response (it might have text before/after)
-            json_start = content.find("{")
-            json_end = content.rfind("}") + 1
-
-            if json_start != -1 and json_end > json_start:
-                json_str = content[json_start:json_end]
-                result = json.loads(json_str)
-                total_elapsed = time.time() - start_time
-                logger.info(f"Analysis complete in {total_elapsed:.1f}s total")
-                return result
+            # Try to find JSON in markdown code blocks first
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
             else:
-                raise ClaudeError("Failed to extract JSON from response")
+                # Fallback: Find JSON in response (it might have text before/after)
+                json_start = content.find("{")
+                json_end = content.rfind("}") + 1
+
+                if json_start != -1 and json_end > json_start:
+                    json_str = content[json_start:json_end]
+                else:
+                    logger.error(f"Failed to find JSON in Claude response: {content[:500]}")
+                    raise ClaudeError("Failed to extract JSON from response")
+
+            # Parse and validate JSON structure
+            try:
+                result = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON from Claude: {json_str[:500]}")
+                raise ClaudeError(f"Failed to parse JSON response: {str(e)}")
+
+            # Validate required fields
+            required_fields = ["financial_health_score", "risk_factors", "key_insights", "recommendations"]
+            missing = [f for f in required_fields if f not in result]
+            if missing:
+                logger.error(f"Claude response missing required fields: {missing}")
+                raise ClaudeError(f"Analysis incomplete - missing: {', '.join(missing)}")
+
+            total_elapsed = time.time() - start_time
+            logger.info(f"Analysis complete in {total_elapsed:.1f}s total")
+            return result
 
         except Exception as e:
-            raise ClaudeError(f"Analysis failed: {str(e)}")
+            error_msg = str(e)
+            # Provide user-friendly error messages for common issues
+            if "rate_limit" in error_msg.lower() or "429" in error_msg:
+                raise ClaudeError("Claude API rate limit exceeded. Please wait a moment and try again.")
+            elif "authentication" in error_msg.lower() or "401" in error_msg:
+                raise ClaudeError("Invalid API key. Please check your ANTHROPIC_API_KEY environment variable.")
+            elif "model" in error_msg.lower() or "404" in error_msg:
+                raise ClaudeError(f"Model not available. Please check your API access or contact support. Details: {error_msg}")
+            else:
+                raise ClaudeError(f"Analysis failed: {error_msg}")
 
     async def chat_stream(
         self,
@@ -177,8 +217,14 @@ Content Guidelines:
         try:
             async with self.client.messages.stream(
                 model=self.chat_model,
-                max_tokens=1000,
-                system=system_prompt,
+                max_tokens=1500,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system_prompt,
+                        "cache_control": {"type": "ephemeral"}
+                    }
+                ],
                 messages=messages
             ) as stream:
                 async for text in stream.text_stream:

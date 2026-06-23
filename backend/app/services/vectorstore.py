@@ -136,27 +136,19 @@ class VectorStore:
 
         results = []
         for score, section in scored_sections[:n_results]:
+            # Normalize score to distance (lower is better)
+            max_score = 20.0
+            distance = max(0.0, 1.0 - (min(score, max_score) / max_score))
+
             results.append({
                 "content": section.get("content", ""),
                 "name": section.get("name", "Unknown"),
                 "ticker": ticker,
                 "fiscal_year": section.get("fiscal_year", ""),
-                "distance": 1.0 - (score / 20.0),  # Fake distance for compatibility
+                "distance": distance,
             })
 
-        # If no good matches, return first n sections
-        if not results or all(s[0] == 0 for s in scored_sections[:n_results]):
-            for section in sections[:n_results]:
-                if section not in [r for _, r in scored_sections[:n_results]]:
-                    results.append({
-                        "content": section.get("content", ""),
-                        "name": section.get("name", "Unknown"),
-                        "ticker": ticker,
-                        "fiscal_year": section.get("fiscal_year", ""),
-                        "distance": 0.5,
-                    })
-
-        return results[:n_results]
+        return results
 
     def has_ticker(self, ticker: str) -> bool:
         """Check if a ticker has been indexed."""
